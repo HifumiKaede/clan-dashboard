@@ -3,20 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Clan Dashboard - Salary</title>
+  <title>Clan Dashboard - Valley War</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 
 <body class="p-4">
-  <div class="container" style="max-width: 1200px;">
+  <div class="container" style="max-width: 1100px;">
     <div class="d-flex justify-content-between align-items-center mb-2">
       <div>
-        <h1 class="mb-1">Valley War Salary</h1>
-        <p class="text-muted m-0">Only attendees are shown. Choose Darksteel or Stone per member. 1 Stone = 2000 Darksteel.</p>
+        <h1 class="mb-1">Valley War Attendance</h1>
+        <p class="text-muted m-0">Pick a date → tick attendees → save. Members are grouped by power score.</p>
       </div>
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary" href="index.html">Back to Roster</a>
-        <a class="btn btn-outline-secondary" href="valley_war.html">Valley War</a>
       </div>
     </div>
 
@@ -28,25 +27,23 @@
           <div class="col-md-4">
             <label class="form-label">Valley War Date</label>
             <input id="war_date" type="date" class="form-control" />
-            <div class="form-text">Loads attendees from <code>valleywars/{date}</code> and payouts from <code>salaries/{date}</code>.</div>
+            <div class="form-text">Usually Wednesday. Choose the exact date you want.</div>
           </div>
 
           <div class="col-md-4">
             <label class="form-label">Notes (optional)</label>
-            <input id="notes" class="form-control" placeholder="e.g. distribution based on attendance" />
+            <input id="war_notes" class="form-control" placeholder="e.g. pushed mid, 2nd place" />
           </div>
 
           <div class="col-md-4 d-flex gap-2">
-            <button id="load_btn" class="btn btn-outline-primary w-100">Load</button>
-            <button id="save_btn" class="btn btn-primary w-100" disabled>Save Salary</button>
+            <button id="load_btn" class="btn btn-outline-primary w-100">Load / Create</button>
+            <button id="save_btn" class="btn btn-primary w-100" disabled>Save Attendance</button>
           </div>
         </div>
 
-        <div class="mt-3 d-flex flex-wrap gap-2" id="badges_row">
-          <span class="badge bg-dark" id="count_attendees">Attendees: 0</span>
-          <span class="badge bg-primary" id="total_ds">Total DS: 0</span>
-          <span class="badge bg-success" id="total_stone">Total Stone: 0</span>
-          <span class="badge bg-success" id="count_paid">Paid: 0</span>
+        <div class="mt-3 d-flex flex-wrap gap-2">
+          <span class="badge bg-dark" id="count_total">Total: 0</span>
+          <span class="badge bg-success" id="count_checked">Attended: 0</span>
         </div>
       </div>
     </div>
@@ -86,9 +83,7 @@
       el.className = "small my-3 " + (isError ? "text-danger" : "text-muted");
     }
 
-    // ----- constants -----
-    const DS_PER_STONE = 2000;
-
+    // --- Buckets (your exact logic) ---
     const BUCKETS = [
       { id: "below_200k", label: "below 200k" },
       { id: "200k", label: "200k" },
@@ -108,109 +103,60 @@
       return "400k";
     }
 
-    function toNumberOrNull(v) {
-      const s = String(v ?? "").trim();
-      if (s === "") return null;
-      const n = Number(s);
-      return Number.isFinite(n) ? n : null;
+    // --- State ---
+    let roster = [];           // list of member objects
+    let rosterMap = new Map(); // id -> member
+    let currentAttendees = new Set(); // member ids checked
+    let loadedDate = null;     // YYYY-MM-DD
+
+    function updateCounts(total) {
+      $("count_total").textContent = "Total: " + total;
+      $("count_checked").textContent = "Attended: " + currentAttendees.size;
     }
 
-    function fmtInt(n) {
-      const x = Number(n) || 0;
-      return Math.round(x).toLocaleString();
-    }
+    function buildGroups() {
+      const groups = {};
+      for (const b of BUCKETS) groups[b.id] = [];
 
-    function fmtStone(n) {
-      const x = Number(n) || 0;
-      return (Math.round(x * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
-    }
-
-    // ----- state -----
-    let membersById = new Map();   // roster
-    let loadedDate = null;
-    let attendeeIds = [];          // from valleywars/{date}
-    let payouts = {};              // memberId -> {choice, darksteel, stones, distributed}
-    let loadedNotes = "";
-
-    function updateTotals() {
-      $("count_attendees").textContent = "Attendees: " + attendeeIds.length;
-
-      let totalDS = 0;
-      let totalStone = 0;
-      let distributedCount = 0;
-
-      for (const id of attendeeIds) {
-        const p = payouts[id];
-        if (!p) continue;
-
-        const ds = Number(p.darksteel) || 0;
-        totalDS += ds;
-
-        const st = Number(p.stones) || 0;
-        totalStone += st;
-
-        if (p.distributed) distributedCount++;
+      for (const m of roster) {
+        const p = (m.power === "" || m.power == null) ? null : Number(m.power);
+        const bucket = bucketFromPower(p);
+        groups[bucket].push(m);
       }
 
-      $("total_ds").textContent = "Total DS: " + fmtInt(totalDS);
-      $("total_stone").textContent = "Total Stone: " + fmtStone(totalStone);
-      $("count_paid").textContent = "Paid: " + distributedCount;
-    }
-
-    function ensurePayout(id) {
-      if (!payouts[id]) {
-        payouts[id] = { choice: "darksteel", darksteel: 0, stones: 0, distributed: false };
+      // sort each group by power desc
+      for (const b of BUCKETS) {
+        groups[b.id].sort((a, c) => (c.power ?? -Infinity) - (a.power ?? -Infinity));
       }
-      if (typeof payouts[id].distributed !== "boolean") payouts[id].distributed = false;
-      if (payouts[id].choice !== "stone" && payouts[id].choice !== "darksteel") payouts[id].choice = "darksteel";
-      if (!Number.isFinite(Number(payouts[id].darksteel))) payouts[id].darksteel = 0;
-      payouts[id].stones = (Number(payouts[id].darksteel) || 0) / DS_PER_STONE;
-      return payouts[id];
+
+      return groups;
     }
 
     function render() {
       const container = $("groups_container");
       container.innerHTML = "";
 
-      const attendeeMembers = attendeeIds.map(id => {
-        const m = membersById.get(id);
-        return m ? m : { id, name: id, level: null, power: null };
-      });
-
-      const groups = {};
-      for (const b of BUCKETS) groups[b.id] = [];
-
-      for (const m of attendeeMembers) {
-        const p = (m.power === "" || m.power == null) ? null : Number(m.power);
-        const bucket = bucketFromPower(p);
-        groups[bucket].push(m);
-      }
+      const groups = buildGroups();
+      const totalMembers = roster.length;
 
       for (const b of BUCKETS) {
-        groups[b.id].sort((a, c) => (Number(c.power) || -Infinity) - (Number(a.power) || -Infinity));
-      }
-
-      for (const b of BUCKETS) {
-        const rows = groups[b.id] ?? [];
+        const members = groups[b.id] ?? [];
         const section = document.createElement("div");
         section.className = "mb-4";
 
         section.innerHTML = `
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <h3 class="h5 m-0">${b.label} <span class="text-muted">(${rows.length})</span></h3>
+            <h3 class="h5 m-0">${b.label} <span class="text-muted">(${members.length})</span></h3>
           </div>
-
           <div class="table-responsive">
             <table class="table table-hover align-middle">
               <thead class="table-dark">
                 <tr>
+                  <th style="width: 60px;">In</th>
                   <th>Name</th>
                   <th>ID</th>
+                  <th>Level</th>
                   <th>Power</th>
-                  <th style="min-width: 220px;">Choice</th>
-                  <th style="min-width: 220px;">Darksteel Input</th>
-                  <th style="min-width: 180px;">Stone Output</th>
-                  <th style="width: 140px;" class="text-center">Distributed</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -220,80 +166,26 @@
 
         const tbody = section.querySelector("tbody");
 
-        for (const m of rows) {
-          const payout = ensurePayout(m.id);
-
+        for (const m of members) {
           const tr = document.createElement("tr");
+
+          const checked = currentAttendees.has(m.id);
           tr.innerHTML = `
+            <td>
+              <input class="form-check-input attend-check" type="checkbox" ${checked ? "checked" : ""}>
+            </td>
             <td class="fw-semibold">${m.name ?? ""}</td>
             <td class="text-muted">${m.id}</td>
+            <td>${m.level ?? ""}</td>
             <td class="fw-semibold">${m.power ?? ""}</td>
-
-            <td>
-              <div class="d-flex gap-3">
-                <div class="form-check">
-                  <input class="form-check-input choice-ds" type="radio" name="choice_${m.id}" ${payout.choice === "darksteel" ? "checked" : ""}>
-                  <label class="form-check-label">Darksteel</label>
-                </div>
-                <div class="form-check">
-                  <input class="form-check-input choice-st" type="radio" name="choice_${m.id}" ${payout.choice === "stone" ? "checked" : ""}>
-                  <label class="form-check-label">Stone</label>
-                </div>
-              </div>
-            </td>
-
-            <td>
-              <input class="form-control ds-input" type="number" min="0" step="1" value="${Number(payout.darksteel) || 0}">
-              <div class="form-text">Enter Darksteel amount</div>
-            </td>
-
-            <td>
-              <input class="form-control stone-output" type="text" readonly value="${fmtStone(Number(payout.stones) || 0)}">
-              <div class="form-text">Auto: DS ÷ ${DS_PER_STONE}</div>
-            </td>
-
-            <td class="text-center">
-              <input type="checkbox" class="form-check-input distributed-check" ${payout.distributed ? "checked" : ""}>
-              <div>
-                <span class="badge bg-success mt-1 paid-badge ${payout.distributed ? "" : "d-none"}">✓ Paid</span>
-              </div>
-            </td>
           `;
 
-          const dsRadio = tr.querySelector(".choice-ds");
-          const stRadio = tr.querySelector(".choice-st");
-          const dsInput = tr.querySelector(".ds-input");
-          const stOut = tr.querySelector(".stone-output");
-          const distCheck = tr.querySelector(".distributed-check");
-          const paidBadge = tr.querySelector(".paid-badge");
-
-          function recompute() {
-            const ds = toNumberOrNull(dsInput.value) ?? 0;
-            payout.darksteel = ds;
-            payout.stones = ds / DS_PER_STONE;
-            stOut.value = fmtStone(payout.stones);
-            updateTotals();
-          }
-
-          function applyChoiceUI() {
-            payout.choice = stRadio.checked ? "stone" : "darksteel";
-            updateTotals();
-          }
-
-          dsRadio.addEventListener("change", applyChoiceUI);
-          stRadio.addEventListener("change", applyChoiceUI);
-
-          dsInput.addEventListener("input", recompute);
-
-          distCheck.addEventListener("change", () => {
-            payout.distributed = distCheck.checked;
-            if (payout.distributed) paidBadge.classList.remove("d-none");
-            else paidBadge.classList.add("d-none");
-            updateTotals();
+          const cb = tr.querySelector(".attend-check");
+          cb.addEventListener("change", () => {
+            if (cb.checked) currentAttendees.add(m.id);
+            else currentAttendees.delete(m.id);
+            updateCounts(totalMembers);
           });
-
-          // init
-          recompute();
 
           tbody.appendChild(tr);
         }
@@ -301,105 +193,86 @@
         container.appendChild(section);
       }
 
-      updateTotals();
+      updateCounts(totalMembers);
     }
 
-    async function loadSalary(dateStr) {
+    async function loadWar(dateStr) {
+      // doc id = date (YYYY-MM-DD)
       const warRef = doc(db, "valleywars", dateStr);
       const warSnap = await getDoc(warRef);
 
-      if (!warSnap.exists()) {
-        attendeeIds = [];
-        payouts = {};
-        loadedDate = dateStr;
-        $("notes").value = "";
-        $("save_btn").disabled = true;
-        $("groups_container").innerHTML = "";
-        updateTotals();
-        return setStatus("No Valley War record for that date. Go to Valley War page and save attendance first.", true);
-      }
+      currentAttendees = new Set();
+      $("war_notes").value = "";
 
-      const warData = warSnap.data();
-      attendeeIds = Array.isArray(warData.attendees) ? warData.attendees : [];
-
-      const salRef = doc(db, "salaries", dateStr);
-      const salSnap = await getDoc(salRef);
-
-      payouts = {};
-      loadedNotes = "";
-
-      if (salSnap.exists()) {
-        const salData = salSnap.data();
-        payouts = (salData.payouts && typeof salData.payouts === "object") ? salData.payouts : {};
-        loadedNotes = salData.notes ?? "";
-        setStatus("Loaded existing salary ✅");
+      if (warSnap.exists()) {
+        const data = warSnap.data();
+        const ids = Array.isArray(data.attendees) ? data.attendees : [];
+        for (const id of ids) currentAttendees.add(id);
+        $("war_notes").value = data.notes ?? "";
+        setStatus("Loaded existing attendance ✅");
       } else {
-        setStatus("No salary saved yet — fill amounts then Save ✅");
+        setStatus("No record yet — tick members then Save ✅");
       }
 
-      $("notes").value = loadedNotes;
       loadedDate = dateStr;
       $("save_btn").disabled = false;
-
       render();
     }
 
-    async function saveSalary() {
-      if (!loadedDate) return setStatus("Pick a date and click Load first.", true);
+    async function saveWar() {
+      if (!loadedDate) return setStatus("Pick a date and click Load/Create first.", true);
 
-      const clean = {};
-      for (const id of attendeeIds) {
-        const p = ensurePayout(id);
-        const ds = Number(p.darksteel) || 0;
-        clean[id] = {
-          choice: p.choice === "stone" ? "stone" : "darksteel",
-          darksteel: ds,
-          stones: ds / DS_PER_STONE,
-          distributed: !!p.distributed
-        };
-      }
-
-      const notes = $("notes").value.trim();
+      const attendees = Array.from(currentAttendees);
+      const notes = $("war_notes").value.trim();
 
       try {
-        await setDoc(doc(db, "salaries", loadedDate), {
+        await setDoc(doc(db, "valleywars", loadedDate), {
           date: loadedDate,
           notes,
-          payouts: clean,
+          attendees,
           updatedAt: Date.now()
         }, { merge: true });
 
-        setStatus("Saved salary ✅");
+        setStatus("Saved attendance ✅");
       } catch (e) {
         console.error(e);
         setStatus("Save failed: " + e.message, true);
       }
     }
 
-    // Default date = today
+    // Default date = today (you can just pick Wednesday)
     const today = new Date();
     $("war_date").value = today.toISOString().slice(0, 10);
 
     $("load_btn").addEventListener("click", async () => {
       const d = $("war_date").value;
       if (!d) return setStatus("Choose a date first.", true);
-      await loadSalary(d);
+      await loadWar(d);
     });
 
     $("save_btn").addEventListener("click", async () => {
-      await saveSalary();
+      await saveWar();
     });
 
-    // Live roster cache (members)
+    // Live roster
     onSnapshot(collection(db, "members"), (snap) => {
-      membersById = new Map();
-      snap.forEach((d) => membersById.set(d.id, { id: d.id, ...d.data() }));
+      roster = [];
+      rosterMap = new Map();
+      snap.forEach((d) => {
+        const m = { id: d.id, ...d.data() };
+        roster.push(m);
+        rosterMap.set(m.id, m);
+      });
 
-      if (loadedDate) render();
-      setStatus(loadedDate ? "Roster updated ✅" : "Pick a date and click Load.");
+      // keep roster stable
+      roster.sort((a,b) => (b.power ?? -Infinity) - (a.power ?? -Infinity));
+
+      // If a war is loaded, re-render with current roster
+      render();
+      setStatus(loadedDate ? "Roster updated ✅" : "Pick a date and click Load/Create.");
     }, (err) => {
       console.error(err);
-      setStatus("Members load failed: " + err.message, true);
+      setStatus("Roster load failed: " + err.message, true);
     });
   </script>
 </body>

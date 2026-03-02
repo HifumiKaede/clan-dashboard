@@ -42,10 +42,11 @@
           </div>
         </div>
 
-        <div class="mt-3 d-flex flex-wrap gap-2">
+        <div class="mt-3 d-flex flex-wrap gap-2" id="badges_row">
           <span class="badge bg-dark" id="count_attendees">Attendees: 0</span>
           <span class="badge bg-primary" id="total_ds">Total DS: 0</span>
           <span class="badge bg-success" id="total_stone">Total Stone: 0</span>
+          <span class="badge bg-success" id="count_paid">Paid: 0</span>
         </div>
       </div>
     </div>
@@ -121,7 +122,6 @@
 
     function fmtStone(n) {
       const x = Number(n) || 0;
-      // show up to 2 decimals
       return (Math.round(x * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
     }
 
@@ -129,7 +129,7 @@
     let membersById = new Map();   // roster
     let loadedDate = null;
     let attendeeIds = [];          // from valleywars/{date}
-    let payouts = {};              // memberId -> {choice, darksteel, stones}
+    let payouts = {};              // memberId -> {choice, darksteel, stones, distributed}
     let loadedNotes = "";
 
     function updateTotals() {
@@ -137,6 +137,7 @@
 
       let totalDS = 0;
       let totalStone = 0;
+      let distributedCount = 0;
 
       for (const id of attendeeIds) {
         const p = payouts[id];
@@ -145,19 +146,25 @@
         const ds = Number(p.darksteel) || 0;
         totalDS += ds;
 
-        // Stone total is only meaningful if choice=stone, but we can still compute from ds
         const st = Number(p.stones) || 0;
         totalStone += st;
+
+        if (p.distributed) distributedCount++;
       }
 
       $("total_ds").textContent = "Total DS: " + fmtInt(totalDS);
       $("total_stone").textContent = "Total Stone: " + fmtStone(totalStone);
+      $("count_paid").textContent = "Paid: " + distributedCount;
     }
 
     function ensurePayout(id) {
       if (!payouts[id]) {
-        payouts[id] = { choice: "darksteel", darksteel: 0, stones: 0 };
+        payouts[id] = { choice: "darksteel", darksteel: 0, stones: 0, distributed: false };
       }
+      if (typeof payouts[id].distributed !== "boolean") payouts[id].distributed = false;
+      if (payouts[id].choice !== "stone" && payouts[id].choice !== "darksteel") payouts[id].choice = "darksteel";
+      if (!Number.isFinite(Number(payouts[id].darksteel))) payouts[id].darksteel = 0;
+      payouts[id].stones = (Number(payouts[id].darksteel) || 0) / DS_PER_STONE;
       return payouts[id];
     }
 
@@ -165,14 +172,11 @@
       const container = $("groups_container");
       container.innerHTML = "";
 
-      // Build attendee member objects
-      const attendeeMembers = attendeeIds
-        .map(id => {
-          const m = membersById.get(id);
-          return m ? m : { id, name: id, level: null, power: null }; // fallback
-        });
+      const attendeeMembers = attendeeIds.map(id => {
+        const m = membersById.get(id);
+        return m ? m : { id, name: id, level: null, power: null };
+      });
 
-      // Group by PS bucket
       const groups = {};
       for (const b of BUCKETS) groups[b.id] = [];
 
@@ -182,7 +186,6 @@
         groups[bucket].push(m);
       }
 
-      // Sort each group by power desc
       for (const b of BUCKETS) {
         groups[b.id].sort((a, c) => (Number(c.power) || -Infinity) - (Number(a.power) || -Infinity));
       }
@@ -207,6 +210,7 @@
                   <th style="min-width: 220px;">Choice</th>
                   <th style="min-width: 220px;">Darksteel Input</th>
                   <th style="min-width: 180px;">Stone Output</th>
+                  <th style="width: 140px;" class="text-center">Distributed</th>
                 </tr>
               </thead>
               <tbody></tbody>
@@ -247,37 +251,48 @@
               <input class="form-control stone-output" type="text" readonly value="${fmtStone(Number(payout.stones) || 0)}">
               <div class="form-text">Auto: DS ÷ ${DS_PER_STONE}</div>
             </td>
+
+            <td class="text-center">
+              <input type="checkbox" class="form-check-input distributed-check" ${payout.distributed ? "checked" : ""}>
+              <div>
+                <span class="badge bg-success mt-1 paid-badge ${payout.distributed ? "" : "d-none"}">✓ Paid</span>
+              </div>
+            </td>
           `;
 
           const dsRadio = tr.querySelector(".choice-ds");
           const stRadio = tr.querySelector(".choice-st");
           const dsInput = tr.querySelector(".ds-input");
           const stOut = tr.querySelector(".stone-output");
+          const distCheck = tr.querySelector(".distributed-check");
+          const paidBadge = tr.querySelector(".paid-badge");
 
           function recompute() {
             const ds = toNumberOrNull(dsInput.value) ?? 0;
             payout.darksteel = ds;
-
-            // Always compute stones from DS (even if they chose Darksteel, for display)
             payout.stones = ds / DS_PER_STONE;
-
-            // If choice is darksteel, stone field is still just computed output (readonly anyway)
             stOut.value = fmtStone(payout.stones);
-
             updateTotals();
           }
 
           function applyChoiceUI() {
             payout.choice = stRadio.checked ? "stone" : "darksteel";
-            // Nothing to disable because user wanted DS input always; stone is output only.
             updateTotals();
           }
 
           dsRadio.addEventListener("change", applyChoiceUI);
           stRadio.addEventListener("change", applyChoiceUI);
+
           dsInput.addEventListener("input", recompute);
 
-          // init row compute
+          distCheck.addEventListener("change", () => {
+            payout.distributed = distCheck.checked;
+            if (payout.distributed) paidBadge.classList.remove("d-none");
+            else paidBadge.classList.add("d-none");
+            updateTotals();
+          });
+
+          // init
           recompute();
 
           tbody.appendChild(tr);
@@ -290,7 +305,6 @@
     }
 
     async function loadSalary(dateStr) {
-      // Load attendees first
       const warRef = doc(db, "valleywars", dateStr);
       const warSnap = await getDoc(warRef);
 
@@ -308,7 +322,6 @@
       const warData = warSnap.data();
       attendeeIds = Array.isArray(warData.attendees) ? warData.attendees : [];
 
-      // Load existing salary for that date (if any)
       const salRef = doc(db, "salaries", dateStr);
       const salSnap = await getDoc(salRef);
 
@@ -334,14 +347,15 @@
     async function saveSalary() {
       if (!loadedDate) return setStatus("Pick a date and click Load first.", true);
 
-      // Keep only payouts for attendees (clean)
       const clean = {};
       for (const id of attendeeIds) {
-        const p = payouts[id] ?? { choice: "darksteel", darksteel: 0, stones: 0 };
+        const p = ensurePayout(id);
+        const ds = Number(p.darksteel) || 0;
         clean[id] = {
           choice: p.choice === "stone" ? "stone" : "darksteel",
-          darksteel: Number(p.darksteel) || 0,
-          stones: (Number(p.darksteel) || 0) / DS_PER_STONE
+          darksteel: ds,
+          stones: ds / DS_PER_STONE,
+          distributed: !!p.distributed
         };
       }
 
@@ -381,7 +395,6 @@
       membersById = new Map();
       snap.forEach((d) => membersById.set(d.id, { id: d.id, ...d.data() }));
 
-      // If a date is already loaded, rerender (keeps grouping updated)
       if (loadedDate) render();
       setStatus(loadedDate ? "Roster updated ✅" : "Pick a date and click Load.");
     }, (err) => {
