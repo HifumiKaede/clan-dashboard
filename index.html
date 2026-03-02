@@ -8,7 +8,7 @@
 </head>
 
 <body class="p-4">
-  <div class="container" style="max-width: 900px;">
+  <div class="container" style="max-width: 980px;">
     <h1 class="mb-1">Clan Dashboard</h1>
     <p class="text-muted mb-4">Members + Power/Level (saved in Firebase Firestore)</p>
 
@@ -16,13 +16,16 @@
       <div class="card-body">
         <h5 class="card-title mb-3">Add / Update Member</h5>
 
-        <div class="row g-2">
+        <!-- hidden: keeps track of what you're editing (optional, but useful) -->
+        <input type="hidden" id="editing_id" value="">
+
+        <div class="row g-2 align-items-start">
           <div class="col-md-3">
             <input id="member_id" class="form-control" placeholder="id (unique)" />
-            <div class="form-text">Example: kaede, ringo, jordi</div>
+            <div class="form-text">Use simple IDs: kaede, ringo, jordi</div>
           </div>
           <div class="col-md-3">
-            <input id="member_name" class="form-control" placeholder="name" />
+            <input id="member_name" class="form-control" placeholder="name (can be Ringo 星)" />
           </div>
           <div class="col-md-2">
             <input id="member_level" type="number" class="form-control" placeholder="level" />
@@ -39,7 +42,12 @@
       </div>
     </div>
 
-    <h2 class="h4">Members</h2>
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h2 class="h4 m-0">Members</h2>
+      <!-- future: link to valleywar.html -->
+      <!-- <a class="btn btn-outline-secondary btn-sm" href="valleywar.html">Valley War</a> -->
+    </div>
+
     <div class="table-responsive">
       <table class="table table-hover align-middle">
         <thead class="table-dark">
@@ -49,6 +57,7 @@
             <th>Level</th>
             <th>Power</th>
             <th>Updated</th>
+            <th class="text-end">Actions</th>
           </tr>
         </thead>
         <tbody id="members_tbody"></tbody>
@@ -56,11 +65,10 @@
     </div>
   </div>
 
-  <!-- ✅ Firebase + Firestore code MUST be inside script type="module" -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
     import {
-      getFirestore, doc, setDoc, collection, query, orderBy, onSnapshot
+      getFirestore, doc, setDoc, deleteDoc, collection, query, orderBy, onSnapshot
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
     const firebaseConfig = {
@@ -79,11 +87,12 @@
     const $ = (id) => document.getElementById(id);
     const statusEl = $("status");
 
-    function setStatus(msg, isError=false) {
+    function setStatus(msg, isError = false) {
       statusEl.textContent = msg;
       statusEl.className = "small mt-3 " + (isError ? "text-danger" : "text-muted");
     }
 
+    // Save / Update
     $("save_btn").addEventListener("click", async () => {
       const id = $("member_id").value.trim();
       const name = $("member_name").value.trim();
@@ -103,6 +112,8 @@
           updatedAt: Date.now()
         }, { merge: true });
 
+        // clear form
+        $("editing_id").value = "";
         $("member_id").value = "";
         $("member_name").value = "";
         $("member_level").value = "";
@@ -114,7 +125,7 @@
       }
     });
 
-    // Live list (sorted by power desc; nulls last)
+    // Live list (sorted by power desc)
     const membersQ = query(collection(db, "members"), orderBy("power", "desc"));
 
     onSnapshot(membersQ, (snap) => {
@@ -125,13 +136,44 @@
         const m = d.data();
         const tr = document.createElement("tr");
         const dt = m.updatedAt ? new Date(m.updatedAt).toLocaleString() : "";
+
         tr.innerHTML = `
           <td class="fw-semibold">${m.name ?? ""}</td>
           <td class="text-muted">${d.id}</td>
           <td>${m.level ?? ""}</td>
           <td class="fw-semibold">${m.power ?? ""}</td>
           <td class="text-muted small">${dt}</td>
+          <td class="text-end">
+            <button class="btn btn-sm btn-outline-primary me-2 edit-btn">Edit</button>
+            <button class="btn btn-sm btn-outline-danger delete-btn">Delete</button>
+          </td>
         `;
+
+        // Edit -> loads data into form
+        tr.querySelector(".edit-btn").addEventListener("click", () => {
+          $("editing_id").value = d.id;
+          $("member_id").value = d.id;
+          $("member_name").value = m.name ?? "";
+          $("member_level").value = (m.level ?? "");
+          $("member_power").value = (m.power ?? "");
+          setStatus("Editing: " + d.id);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        });
+
+        // Delete -> removes doc
+        tr.querySelector(".delete-btn").addEventListener("click", async () => {
+          const ok = confirm(`Delete member "${m.name ?? d.id}" (${d.id})?`);
+          if (!ok) return;
+
+          try {
+            await deleteDoc(doc(db, "members", d.id));
+            setStatus("Deleted ✅");
+          } catch (e) {
+            console.error(e);
+            setStatus("Delete failed: " + e.message, true);
+          }
+        });
+
         tbody.appendChild(tr);
       });
 
