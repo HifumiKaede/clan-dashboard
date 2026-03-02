@@ -1,0 +1,17 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+import {
+  getFirestore, doc, setDoc, collection, query, orderBy, onSnapshot
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyANkanSC5HJI3qI4z2CY-0zif_d8nocCTQ",
+  authDomain: "shambhala-bdbb5.firebaseapp.com",
+  projectId: "shambhala-bdbb5",
+  storageBucket: "shambhala-bdbb5.firebasestorage.app",
+  messagingSenderId: "420071179202",
+  appId: "1:420071179202:web:72c23bd0f76b7c9b87cc5b",
+  measurementId: "G-4EN2NM7J1Z"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
