@@ -16,7 +16,6 @@
       </div>
       <div class="d-flex gap-2">
         <a class="btn btn-outline-secondary" href="index.html">Back to Roster</a>
-        <button id="save_groups" class="btn btn-primary">Save groups for Valley War</button>
       </div>
     </div>
 
@@ -25,7 +24,7 @@
     <div id="groups_container"></div>
 
     <div class="text-muted small mt-3">
-      Bucket rules (edit if you want):<br>
+      Bucket rules:<br>
       &lt;200k → below 200k, 200k–249,999 → 200k, 250k–299,999 → 250k, 300k–349,999 → 300k,
       350k–399,999 → 350k, ≥400k → 400k
     </div>
@@ -36,8 +35,6 @@
     import {
       getFirestore,
       collection,
-      doc,
-      setDoc,
       onSnapshot
     } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
@@ -83,9 +80,6 @@
       return "400k";
     }
 
-    // State for saving
-    let latestGroups = {}; // bucketId -> array of member ids
-
     function render(groups, membersById) {
       groupsContainer.innerHTML = "";
 
@@ -116,7 +110,6 @@
 
         const tbody = section.querySelector("tbody");
 
-        // sort by power desc
         const rows = ids
           .map(id => membersById.get(id))
           .filter(Boolean)
@@ -139,28 +132,6 @@
       }
     }
 
-    async function saveGroups() {
-      // Saves to Firestore collection: categories
-      // categories/{bucketId} = { memberIds: [...], updatedAt: ... }
-      const ts = Date.now();
-      const writes = BUCKETS.map(b => {
-        const ref = doc(db, "categories", b.id);
-        const memberIds = latestGroups[b.id] ?? [];
-        return setDoc(ref, { memberIds, updatedAt: ts }, { merge: true });
-      });
-      await Promise.all(writes);
-    }
-
-    $("save_groups").addEventListener("click", async () => {
-      try {
-        await saveGroups();
-        setStatus("Saved groups to Firestore ✅");
-      } catch (e) {
-        console.error(e);
-        setStatus("Save failed: " + e.message, true);
-      }
-    });
-
     // Live roster listener -> auto-group
     onSnapshot(collection(db, "members"), (snap) => {
       const membersById = new Map();
@@ -177,7 +148,6 @@
         groups[bucket].push(m.id);
       });
 
-      latestGroups = groups;
       render(groups, membersById);
       setStatus("Grouped members ✅");
     }, (err) => {
